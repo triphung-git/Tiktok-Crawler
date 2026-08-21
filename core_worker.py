@@ -4,6 +4,7 @@ import subprocess
 import re
 import argparse
 import threading
+import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from typing import Any
@@ -17,10 +18,51 @@ except ModuleNotFoundError:
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 FFMPEG_PATH = os.path.join(CURRENT_DIR, "ffmpeg.exe")
 FFPROBE_PATH = os.path.join(CURRENT_DIR, "ffprobe.exe")
-OUTPUT_DIR = os.path.join(CURRENT_DIR, "WEEK1_2008")
-METADATA_FILE = os.path.join(OUTPUT_DIR, "metadata.json")
-os.makedirs(OUTPUT_DIR, exist_ok=True)
+OUTPUT_DIR = ""
+METADATA_FILE = ""
 METADATA_LOCK = threading.Lock()
+
+
+def configure_output_directory(input_file: str) -> None:
+    """Đặt audio và metadata vào thư mục chứa file input đã xác nhận."""
+    global OUTPUT_DIR, METADATA_FILE
+    OUTPUT_DIR = os.path.dirname(os.path.abspath(input_file))
+    METADATA_FILE = os.path.join(OUTPUT_DIR, "metadata.json")
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+
+def find_input_file(directory: str) -> str:
+    """Tìm file sources_DDMM.json trong thư mục batch."""
+    candidates = sorted(
+        os.path.join(directory, name)
+        for name in os.listdir(directory)
+        if re.fullmatch(r"sources_\d{4}(?:_\d{2})?\.json", name)
+    )
+    if not candidates:
+        raise FileNotFoundError(
+            f"Không tìm thấy file sources_DDMM.json trong thư mục: {directory}"
+        )
+    if len(candidates) == 1:
+        return candidates[0]
+
+    print("Các file input tìm thấy:")
+    for index, candidate in enumerate(candidates, start=1):
+        print(f"  {index}. {os.path.basename(candidate)}")
+    choice = input("Chọn số file input: ").strip()
+    if not choice.isdigit() or not 1 <= int(choice) <= len(candidates):
+        raise ValueError("Lựa chọn file input không hợp lệ.")
+    return candidates[int(choice) - 1]
+
+
+def confirm_input(input_file: str) -> None:
+    """Yêu cầu xác nhận rõ ràng trước khi tạo output hoặc tải dữ liệu."""
+    tasks = load_tasks(input_file)
+    print(f"\nThư mục xử lý: {os.path.dirname(os.path.abspath(input_file))}")
+    print(f"File input: {os.path.basename(input_file)}")
+    print(f"Số task: {len(tasks)}")
+    answer = input("Bắt đầu xử lý file này? [y/N]: ").strip().lower()
+    if answer not in {"y", "yes"}:
+        raise RuntimeError("Đã hủy xử lý theo xác nhận của người dùng.")
 
 
 def safe_task_id(task_id: Any) -> str:
@@ -203,7 +245,10 @@ def process_audio_task(task: dict[str, Any]) -> dict[str, Any]:
     
     try:
         if yt_dlp is None:
-            raise RuntimeError("Thiếu thư viện yt-dlp. Cài bằng: python -m pip install yt-dlp")
+            raise RuntimeError(
+                "Thiếu thư viện yt-dlp trong interpreter đang chạy. "
+                f"Cài bằng: {sys.executable} -m pip install yt-dlp"
+            )
         if not url or not isinstance(url, str):
             raise ValueError("Task không có original_url hợp lệ.")
         if not os.path.isfile(FFMPEG_PATH):
@@ -325,12 +370,16 @@ def process_audio_task(task: dict[str, Any]) -> dict[str, Any]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Tai, chuan hoa va kiem dinh audio TikTok theo batch."
+        description="Tải, chuẩn hóa và kiểm định audio theo batch."
     )
     parser.add_argument(
         "--input",
-        default=os.path.join(CURRENT_DIR, "sources.json"),
-        help="Duong dan file JSON chua danh sach task."
+        help="Đường dẫn file JSON; nếu bỏ qua, tool tìm sources_DDMM.json trong --directory."
+    )
+    parser.add_argument(
+        "--directory",
+        default=CURRENT_DIR,
+        help="Thư mục chứa sources_DDMM.json; mặc định là thư mục của tool."
     )
     parser.add_argument(
         "--workers",
@@ -344,12 +393,22 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    if not os.path.isfile(args.input):
-        raise FileNotFoundError(f"Khong tim thay file input: {args.input}")
+    input_file = os.path.abspath(args.input) if args.input else os.path.abspath(
+        find_input_file(args.directory)
+    )
+    if not os.path.isfile(input_file):
+        raise FileNotFoundError(f"Không tìm thấy file input: {input_file}")
+
+    try:
+        confirm_input(input_file)
+    except RuntimeError as error:
+        print(f"[-] {error}")
+        return
+    configure_output_directory(input_file)
 
     if args.task_id:
         tasks = [
-            task for task in load_tasks(args.input)
+            task for task in load_tasks(input_file)
             if task.get("task_id") == args.task_id
         ]
         if not tasks:
@@ -358,8 +417,11 @@ def main() -> None:
         print(json.dumps(result, indent=2, ensure_ascii=False))
         return
 
-    run_batch(args.input, args.workers)
+    run_batch(input_file, args.workers)
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except (FileNotFoundError, ValueError, json.JSONDecodeError) as error:
+        print(f"[-] {error}")
