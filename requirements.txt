@@ -1,0 +1,4 @@
+numpy
+soundfile
+sherpa-onnx
+yt-dlp

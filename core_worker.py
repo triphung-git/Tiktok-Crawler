@@ -14,6 +14,11 @@ try:
 except ModuleNotFoundError:
     yt_dlp = None
 
+try:
+    from models.speech_denoiser import enhance_audio
+except ModuleNotFoundError:
+    enhance_audio = None
+
 # 1. THIẾT LẬP ĐƯỜNG DẪN PORTABLE
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 FFMPEG_PATH = os.path.join(CURRENT_DIR, "ffmpeg.exe")
@@ -69,7 +74,12 @@ def safe_task_id(task_id: Any) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]", "_", str(task_id))
 
 
-def build_audio_metadata(task: dict[str, Any], audio_path: str, duration: float) -> dict[str, Any]:
+def build_audio_metadata(
+    task: dict[str, Any],
+    audio_path: str,
+    duration: float,
+    enhanced_audio_path: str | None = None,
+) -> dict[str, Any]:
     """Tạo record metadata theo format chuẩn cho một audio đã kiểm định."""
     task_id = safe_task_id(task.get("task_id", "UNKNOWN_ID"))
     video_id = str(task.get("platform_video_id") or "")
@@ -77,7 +87,7 @@ def build_audio_metadata(task: dict[str, Any], audio_path: str, duration: float)
         match = re.search(r"/video/(\d+)", task.get("original_url", ""))
         video_id = match.group(1) if match else ""
 
-    return {
+    record = {
         "item_id": task.get("item_id") or f"tt_{video_id}",
         "platform": task.get("platform", "tiktok"),
         "platform_video_id": video_id,
@@ -98,6 +108,13 @@ def build_audio_metadata(task: dict[str, Any], audio_path: str, duration: float)
         }),
         "language_region": task.get("language_region", "mixed")
     }
+    if enhanced_audio_path:
+        record["enhanced_audio_path"] = os.path.relpath(
+            enhanced_audio_path, CURRENT_DIR
+        ).replace(os.sep, "/")
+        record["enhancement_status"] = "success"
+        record["enhancement_model"] = "dpdfnet8.onnx"
+    return record
 
 
 def load_metadata_records() -> list[dict[str, Any]]:
@@ -228,6 +245,8 @@ def process_audio_task(task: dict[str, Any]) -> dict[str, Any]:
     temp_downloaded_file = None
     final_wav_file = os.path.join(OUTPUT_DIR, f"{task_id}.wav")
     wav_temp_file = os.path.join(OUTPUT_DIR, f".{task_id}.wav.part")
+    enhanced_wav_file = os.path.join(OUTPUT_DIR, f"{task_id}.enhanced.wav")
+    enhanced_wav_temp_file = os.path.join(OUTPUT_DIR, f".{task_id}.enhanced.wav.part")
     metadata_temp_file = os.path.join(OUTPUT_DIR, f".{task_id}.json.part")
     metadata_file = METADATA_FILE
 
@@ -237,7 +256,8 @@ def process_audio_task(task: dict[str, Any]) -> dict[str, Any]:
     item_id = task.get("item_id")
     has_metadata = any(record.get("item_id") == item_id for record in existing_metadata)
 
-    if os.path.exists(final_wav_file) and has_metadata:
+    has_enhanced_audio = os.path.exists(enhanced_wav_file)
+    if os.path.exists(final_wav_file) and has_metadata and has_enhanced_audio:
         result["status"] = "success"
         result["local_path"] = final_wav_file
         result["metadata_path"] = metadata_file
@@ -255,6 +275,11 @@ def process_audio_task(task: dict[str, Any]) -> dict[str, Any]:
             raise FileNotFoundError(f"Không tìm thấy FFmpeg: {FFMPEG_PATH}")
         if not os.path.isfile(FFPROBE_PATH):
             raise FileNotFoundError(f"Không tìm thấy FFprobe: {FFPROBE_PATH}")
+        if enhance_audio is None:
+            raise RuntimeError(
+                "Thiếu runtime DPDFNet. Cài bằng: "
+                f"{sys.executable} -m pip install -r requirements.txt"
+            )
 
         # ==========================================
         # BƯỚC 1: TẢI AUDIO BẰNG YT-DLP
@@ -333,7 +358,46 @@ def process_audio_task(task: dict[str, Any]) -> dict[str, Any]:
             raise ValueError("Thời lượng audio sau chuyển đổi không khớp metadata đầu vào.")
 
         os.replace(wav_temp_file, final_wav_file)
-        metadata = build_audio_metadata(task, final_wav_file, actual_duration)
+
+        print(f"  [4/5] Đang khử nhiễu bằng DPDFNet...")
+        enhance_audio(final_wav_file, enhanced_wav_temp_file)
+
+        print(f"  [5/5] Đang xác minh audio enhanced...")
+        enhanced_probe_process = run_media_command(
+            [
+                FFPROBE_PATH,
+                "-v", "quiet",
+                "-print_format", "json",
+                "-show_streams",
+                "-show_format",
+                enhanced_wav_temp_file,
+            ],
+            timeout=60,
+        )
+        enhanced_probe_data = json.loads(enhanced_probe_process.stdout)
+        enhanced_stream = next(
+            (
+                stream for stream in enhanced_probe_data.get("streams", [])
+                if stream.get("codec_type") == "audio"
+            ),
+            None,
+        )
+        if not enhanced_stream:
+            raise ValueError("Không tìm thấy luồng audio trong file enhanced.")
+        if (
+            str(enhanced_stream.get("sample_rate")) != "16000"
+            or int(enhanced_stream.get("channels", 0)) != 1
+            or enhanced_stream.get("codec_name") != "pcm_s16le"
+        ):
+            raise ValueError("Kiểm định file enhanced thất bại.")
+        os.replace(enhanced_wav_temp_file, enhanced_wav_file)
+
+        metadata = build_audio_metadata(
+            task,
+            final_wav_file,
+            actual_duration,
+            enhanced_wav_file,
+        )
         upsert_metadata_record(metadata)
 
         # ==========================================
@@ -355,6 +419,10 @@ def process_audio_task(task: dict[str, Any]) -> dict[str, Any]:
             os.remove(final_wav_file)
         if os.path.exists(wav_temp_file):
             os.remove(wav_temp_file)
+        if os.path.exists(enhanced_wav_file):
+            os.remove(enhanced_wav_file)
+        if os.path.exists(enhanced_wav_temp_file):
+            os.remove(enhanced_wav_temp_file)
         if os.path.exists(metadata_temp_file):
             os.remove(metadata_temp_file)
             
