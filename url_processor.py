@@ -1,11 +1,13 @@
 import json
+import math
 import os
 import re
 import unicodedata
 import argparse
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from collections import Counter
+from typing import Any, Optional
 from urllib.parse import parse_qs, urlparse
 
 
@@ -158,122 +160,202 @@ def find_input_file(directory: Path) -> tuple[Path, str]:
             f"Không tìm thấy file raw_dataDDMM.json trong thư mục: {directory}"
         )
     if len(candidates) > 1:
-        print("Các file input tìm thấy:")
-        for index, candidate in enumerate(candidates, start=1):
-            print(f"  {index}. {candidate.name}")
-        choice = input("Chọn số file input: ").strip()
-        if not choice.isdigit() or not 1 <= int(choice) <= len(candidates):
-            raise ValueError("Lựa chọn file input không hợp lệ.")
-        selected = candidates[int(choice) - 1]
-    else:
-        selected = candidates[0]
+        names = ", ".join(candidate.name for candidate in candidates)
+        raise ValueError(
+            f"Thư mục có nhiều file input ({names}). Hãy dùng --input để chọn một file."
+        )
+    selected = candidates[0]
     date_token = re.fullmatch(r"raw_data(\d{4})\.json", selected.name).group(1)
     return selected, date_token
 
 
+def load_input_records(input_file: Path) -> list[dict[str, Any]]:
+    with input_file.open("r", encoding="utf-8") as input_handle:
+        data = json.load(input_handle)
+    if not isinstance(data, list):
+        raise ValueError("JSON đầu vào phải là một danh sách records.")
+    return data
+
+
 def confirm_input(input_file: Path, record_count: int) -> None:
-    print(f"\nInput được chọn: {input_file}")
+    print(f"\nFile input: {input_file}")
     print(f"Số records: {record_count}")
     answer = input("Xác nhận xử lý file này? [y/N]: ").strip().lower()
     if answer not in {"y", "yes"}:
         raise RuntimeError("Đã hủy xử lý theo xác nhận của người dùng.")
 
-def process_and_export_urls(input_file: str, output_file: str):
-    """
-    Đọc JSON thô, xử lý URL và xuất ra định dạng Task tiêu chuẩn.
-    """
-    if not os.path.exists(input_file):
-        print(f"[-] Lỗi: Không tìm thấy file đầu vào '{input_file}'")
-        return
 
-    print(f"[*] Đang đọc dữ liệu từ '{input_file}'...")
-    with open(input_file, 'r', encoding='utf-8') as f:
-        try:
-            data = json.load(f)
-        except json.JSONDecodeError:
-            print("[-] Lỗi: Cấu trúc file JSON đầu vào không hợp lệ.")
-            return
+def reject_record(index: int, reason: str, raw_url: Any = "", message: str = "") -> dict[str, Any]:
+    return {
+        "record_index": index,
+        "status": "rejected",
+        "reason": reason,
+        "raw_url": raw_url,
+        "message": message,
+    }
 
+
+def build_task(item: dict[str, Any], clean_url: str, platform: str, task_number: int,
+               crawl_batch: str, crawled_at: str) -> dict[str, Any]:
+    video_meta = item.get("videoMeta") or {}
+    duration_seconds = item.get("videoMeta.duration", video_meta.get("duration"))
+    text_language = item.get("textLanguage") or "unknown"
+    language_region = infer_regional_dialect(item.get("text", ""))
+    platform_video_id = extract_video_id(clean_url, item, platform)
+    subtitle_links = item.get("videoMeta.subtitleLinks", video_meta.get("subtitleLinks")) or []
+    platform_prefix = {"tiktok": "tt", "youtube": "yt", "facebook": "fb"}[platform]
+
+    return {
+        "task_id": f"ID_{task_number:04d}",
+        "item_id": f"{platform_prefix}_{platform_video_id}",
+        "platform": platform,
+        "platform_video_id": platform_video_id,
+        "original_url": clean_url,
+        "title": item.get("text", ""),
+        "description": item.get("text", ""),
+        "posted_at": item.get("createTimeISO"),
+        "duration_seconds": duration_seconds,
+        "duration_formatted": format_duration(duration_seconds),
+        "text_language": text_language,
+        "language_raw": text_language,
+        "language_region": language_region,
+        "crawl_batch": crawl_batch,
+        "crawled_at": crawled_at,
+        "platform_meta": {
+            "music_is_original": bool(item.get("musicMeta.musicOriginal", (item.get("musicMeta") or {}).get("musicOriginal", False))),
+            "is_duet": bool(item.get("isDuet", False)),
+            "is_stitch": bool(item.get("isStitch", False)),
+            "has_platform_captions": bool(subtitle_links),
+        },
+    }
+
+
+def process_records(
+    data: list[Any],
+    crawl_batch: str,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     tasks = []
+    rejected = []
     seen_urls = set()
-    crawl_batch = os.getenv("CRAWL_BATCH", "tt_batch_01")
     crawled_at = datetime.now(timezone.utc).isoformat()
 
-    for item in data:
+    for index, item in enumerate(data, start=1):
         if not isinstance(item, dict):
+            rejected.append(reject_record(index, "invalid_record", message="Record không phải object."))
             continue
-        # Trích xuất URL từ key 'webVideoUrl'
-        raw_url = item.get("webVideoUrl", "")
+        raw_url = item.get("webVideoUrl")
+        if not isinstance(raw_url, str) or not raw_url.strip():
+            rejected.append(reject_record(index, "missing_url", raw_url=raw_url, message="Thiếu trường webVideoUrl."))
+            continue
         platform = detect_platform(raw_url)
+        if not platform:
+            rejected.append(reject_record(index, "unsupported_platform", raw_url=raw_url, message="Domain không được hỗ trợ."))
+            continue
         clean_url = sanitize_video_url(raw_url)
-
-        # Lọc trùng lặp và đóng gói
-        if clean_url and clean_url not in seen_urls:
-            seen_urls.add(clean_url)
-
-            video_meta = item.get("videoMeta") or {}
-            duration_seconds = item.get("videoMeta.duration", video_meta.get("duration"))
-            text_language = item.get("textLanguage") or "unknown"
-            language_region = infer_regional_dialect(item.get("text", ""))
-            platform_video_id = extract_video_id(clean_url, item, platform)
-            subtitle_links = item.get("videoMeta.subtitleLinks", video_meta.get("subtitleLinks")) or []
-            platform_prefix = {"tiktok": "tt", "youtube": "yt", "facebook": "fb"}[platform]
-
-            tasks.append({
-                "task_id": f"ID_{len(tasks) + 1:04d}",
-                "item_id": f"{platform_prefix}_{platform_video_id}",
-                "platform": platform,
-                "platform_video_id": platform_video_id,
-                "original_url": clean_url,
-                "title": item.get("text", ""),
-                "description": item.get("text", ""),
-                "posted_at": item.get("createTimeISO"),
-                "duration_seconds": duration_seconds,
-                "duration_formatted": format_duration(duration_seconds),
-                "text_language": text_language,
-                "language_raw": text_language,
-                "language_region": language_region,
-                "crawl_batch": crawl_batch,
-                "crawled_at": crawled_at,
-                "platform_meta": {
-                    "music_is_original": bool(item.get("musicMeta.musicOriginal", (item.get("musicMeta") or {}).get("musicOriginal", False))),
-                    "is_duet": bool(item.get("isDuet", False)),
-                    "is_stitch": bool(item.get("isStitch", False)),
-                    "has_platform_captions": bool(subtitle_links)
-                }
-            })
-
-    # Ghi dữ liệu sạch ra file nguồn mới (sources.json)
-    print(f"[*] Đang xuất dữ liệu ra file '{output_file}'...")
-    with open(output_file, 'w', encoding='utf-8') as f:
-        # ensure_ascii=False giúp giữ nguyên ký tự tiếng Việt (nếu có sau này)
-        # indent=4 giúp file JSON dễ đọc với con người
-        json.dump(tasks, f, ensure_ascii=False, indent=4)
-
-    print(f"[+] Thành công! Từ {len(data)} records gốc, đã lọc và xuất {len(tasks)} URLs sạch.")
+        if not clean_url:
+            rejected.append(reject_record(index, "invalid_url", raw_url=raw_url, message="URL không hợp lệ."))
+            continue
+        if clean_url in seen_urls:
+            rejected.append(reject_record(index, "duplicate_url", raw_url=raw_url, message=f"Trùng URL chuẩn hóa: {clean_url}"))
+            continue
+        platform_video_id = extract_video_id(clean_url, item, platform)
+        if not platform_video_id:
+            rejected.append(reject_record(index, "missing_video_id", raw_url=raw_url, message="Không trích xuất được video ID."))
+            continue
+        duration = item.get("videoMeta.duration", (item.get("videoMeta") or {}).get("duration"))
+        if duration is not None:
+            try:
+                duration_value = float(duration)
+                if not math.isfinite(duration_value) or duration_value < 0:
+                    raise ValueError
+            except (TypeError, ValueError):
+                rejected.append(reject_record(index, "invalid_duration", raw_url=raw_url, message="Duration phải là số không âm."))
+                continue
+        seen_urls.add(clean_url)
+        tasks.append(build_task(item, clean_url, platform, len(tasks) + 1, crawl_batch, crawled_at))
+    return tasks, rejected
 
 
-# ================= HƯỚNG DẪN SỬ DỤNG =================
-if __name__ == "__main__":
+def atomic_write_json(path: Path, data: Any) -> None:
+    temp_path = path.with_name(f".{path.name}.part")
+    with temp_path.open("w", encoding="utf-8") as output_handle:
+        json.dump(data, output_handle, ensure_ascii=False, indent=4)
+        output_handle.write("\n")
+    os.replace(temp_path, path)
+
+
+def process_and_export_urls(
+    input_file: str,
+    output_file: str,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    input_path = Path(input_file)
+    data = load_input_records(input_path)
+    tasks, rejected = process_records(
+        data,
+        os.getenv("CRAWL_BATCH", "tt_batch_01"),
+    )
+    output_path = Path(output_file)
+    report = {
+        "input_file": str(input_path),
+        "output_file": str(output_path),
+        "total_records": len(data),
+        "valid_records": len(tasks),
+        "rejected_records": len(rejected),
+        "reasons": dict(Counter(item["reason"] for item in rejected)),
+        "dry_run": dry_run,
+    }
+    if not dry_run:
+        atomic_write_json(output_path, tasks)
+        output_stem = output_path.stem.removeprefix("sources_")
+        atomic_write_json(output_path.with_name(f"processing_report_{output_stem}.json"), report)
+    print(f"[+] {input_path.name}: {len(tasks)} hợp lệ, {len(rejected)} bị loại.")
+    return report
+
+
+def main() -> None:
     parser = argparse.ArgumentParser(
         description="Làm sạch URL video từ TikTok, YouTube và Facebook."
     )
     parser.add_argument(
         "--directory",
         default=".",
-        help="Thư mục chứa raw_dataDDMM.json; mặc định là thư mục hiện tại.",
+        help="Thư mục cần xử lý; mặc định là thư mục hiện tại.",
+    )
+    parser.add_argument(
+        "--input",
+        help="Xử lý chính xác một file raw_dataDDMM.json; ghi đè --directory.",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Chỉ kiểm tra và in báo cáo, không ghi output.",
     )
     args = parser.parse_args()
+    root = Path(args.directory).resolve()
+    if not root.is_dir():
+        raise FileNotFoundError(f"Không tìm thấy thư mục: {root}")
+    if args.input:
+        selected_input = Path(args.input).resolve()
+        if not selected_input.is_file():
+            raise FileNotFoundError(f"Không tìm thấy file input: {selected_input}")
+        match = re.fullmatch(r"raw_data(\d{4})\.json", selected_input.name)
+        if not match:
+            raise ValueError("File input phải có tên dạng raw_dataDDMM.json.")
+        input_file, date_token = selected_input, match.group(1)
+    else:
+        input_file, date_token = find_input_file(root)
 
-    try:
-        input_file, date_token = find_input_file(Path(args.directory).resolve())
-        with input_file.open("r", encoding="utf-8") as input_handle:
-            input_data = json.load(input_handle)
-        if not isinstance(input_data, list):
-            raise ValueError("JSON đầu vào phải là một danh sách records.")
-        confirm_input(input_file, len(input_data))
-        output_file = next_output_path(input_file.parent, date_token)
-        process_and_export_urls(str(input_file), str(output_file))
+    record_count = len(load_input_records(input_file))
+    confirm_input(input_file, record_count)
+    output_file = next_output_path(input_file.parent, date_token)
+    process_and_export_urls(str(input_file), str(output_file), args.dry_run)
+    if not args.dry_run:
         print(f"[+] Output: {output_file}")
+
+
+if __name__ == "__main__":
+    try:
+        main()
     except (FileNotFoundError, json.JSONDecodeError, RuntimeError, ValueError) as error:
         print(f"[-] {error}")

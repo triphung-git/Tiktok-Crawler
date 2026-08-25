@@ -1,7 +1,6 @@
 import argparse
 import threading
 from pathlib import Path
-
 import numpy as np
 import sherpa_onnx
 import soundfile as sf
@@ -59,7 +58,13 @@ def enhance_audio(input_path: str | Path, output_path: str | Path) -> None:
     denoised = get_denoiser().run(samples, sample_rate)
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    sf.write(str(output_path), denoised.samples, denoised.sample_rate, subtype="PCM_16")
+    sf.write(
+        str(output_path),
+        denoised.samples,
+        denoised.sample_rate,
+        format="WAV",
+        subtype="PCM_16",
+    )
 
 
 def main() -> None:

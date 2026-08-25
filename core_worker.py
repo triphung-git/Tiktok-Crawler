@@ -78,7 +78,6 @@ def build_audio_metadata(
     task: dict[str, Any],
     audio_path: str,
     duration: float,
-    enhanced_audio_path: str | None = None,
 ) -> dict[str, Any]:
     """Tạo record metadata theo format chuẩn cho một audio đã kiểm định."""
     task_id = safe_task_id(task.get("task_id", "UNKNOWN_ID"))
@@ -108,12 +107,8 @@ def build_audio_metadata(
         }),
         "language_region": task.get("language_region", "mixed")
     }
-    if enhanced_audio_path:
-        record["enhanced_audio_path"] = os.path.relpath(
-            enhanced_audio_path, CURRENT_DIR
-        ).replace(os.sep, "/")
-        record["enhancement_status"] = "success"
-        record["enhancement_model"] = "dpdfnet8.onnx"
+    record["enhancement_status"] = "success"
+    record["enhancement_model"] = "dpdfnet8.onnx"
     return record
 
 
@@ -245,7 +240,6 @@ def process_audio_task(task: dict[str, Any]) -> dict[str, Any]:
     temp_downloaded_file = None
     final_wav_file = os.path.join(OUTPUT_DIR, f"{task_id}.wav")
     wav_temp_file = os.path.join(OUTPUT_DIR, f".{task_id}.wav.part")
-    enhanced_wav_file = os.path.join(OUTPUT_DIR, f"{task_id}.enhanced.wav")
     enhanced_wav_temp_file = os.path.join(OUTPUT_DIR, f".{task_id}.enhanced.wav.part")
     metadata_temp_file = os.path.join(OUTPUT_DIR, f".{task_id}.json.part")
     metadata_file = METADATA_FILE
@@ -254,10 +248,18 @@ def process_audio_task(task: dict[str, Any]) -> dict[str, Any]:
     if os.path.exists(metadata_file) and os.path.getsize(metadata_file) > 0:
         existing_metadata = load_metadata_records()
     item_id = task.get("item_id")
-    has_metadata = any(record.get("item_id") == item_id for record in existing_metadata)
+    current_metadata = next(
+        (record for record in existing_metadata if record.get("item_id") == item_id),
+        None,
+    )
+    has_metadata = bool(
+        current_metadata
+        and current_metadata.get("enhancement_status") == "success"
+        and current_metadata.get("enhancement_model") == "dpdfnet8.onnx"
+        and not current_metadata.get("enhanced_audio_path")
+    )
 
-    has_enhanced_audio = os.path.exists(enhanced_wav_file)
-    if os.path.exists(final_wav_file) and has_metadata and has_enhanced_audio:
+    if os.path.exists(final_wav_file) and has_metadata:
         result["status"] = "success"
         result["local_path"] = final_wav_file
         result["metadata_path"] = metadata_file
@@ -357,10 +359,8 @@ def process_audio_task(task: dict[str, Any]) -> dict[str, Any]:
         if expected_duration is not None and abs(actual_duration - float(expected_duration)) > 2:
             raise ValueError("Thời lượng audio sau chuyển đổi không khớp metadata đầu vào.")
 
-        os.replace(wav_temp_file, final_wav_file)
-
         print(f"  [4/5] Đang khử nhiễu bằng DPDFNet...")
-        enhance_audio(final_wav_file, enhanced_wav_temp_file)
+        enhance_audio(wav_temp_file, enhanced_wav_temp_file)
 
         print(f"  [5/5] Đang xác minh audio enhanced...")
         enhanced_probe_process = run_media_command(
@@ -390,13 +390,13 @@ def process_audio_task(task: dict[str, Any]) -> dict[str, Any]:
             or enhanced_stream.get("codec_name") != "pcm_s16le"
         ):
             raise ValueError("Kiểm định file enhanced thất bại.")
-        os.replace(enhanced_wav_temp_file, enhanced_wav_file)
+        os.replace(enhanced_wav_temp_file, final_wav_file)
+        os.remove(wav_temp_file)
 
         metadata = build_audio_metadata(
             task,
             final_wav_file,
             actual_duration,
-            enhanced_wav_file,
         )
         upsert_metadata_record(metadata)
 
@@ -419,8 +419,6 @@ def process_audio_task(task: dict[str, Any]) -> dict[str, Any]:
             os.remove(final_wav_file)
         if os.path.exists(wav_temp_file):
             os.remove(wav_temp_file)
-        if os.path.exists(enhanced_wav_file):
-            os.remove(enhanced_wav_file)
         if os.path.exists(enhanced_wav_temp_file):
             os.remove(enhanced_wav_temp_file)
         if os.path.exists(metadata_temp_file):
