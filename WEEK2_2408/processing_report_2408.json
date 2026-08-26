@@ -1,9 +1,0 @@
-{
-    "input_file": "D:\\Pycharm\\data_crawl\\WEEK2_2408\\raw_data2408.json",
-    "output_file": "D:\\Pycharm\\data_crawl\\WEEK2_2408\\sources_2408.json",
-    "total_records": 754,
-    "valid_records": 754,
-    "rejected_records": 0,
-    "reasons": {},
-    "dry_run": false
-}

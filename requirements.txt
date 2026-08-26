@@ -2,3 +2,4 @@ numpy
 soundfile
 sherpa-onnx
 yt-dlp
+curl-cffi
