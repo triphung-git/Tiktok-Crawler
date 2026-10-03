@@ -1,0 +1,72 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+.venv/
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Environment variables
+.env
+!.env.example
+
+# Temporary and download files
+*.part
+*.download_*
+.download_*
+.*.part
+
+# Media files in working directories (preserve data structure with .gitkeep)
+data/raw/*
+!data/raw/**/.gitkeep
+data/processed/audio/*
+!data/processed/audio/**/.gitkeep
+data/output/*
+!data/output/**/.gitkeep
+*.wav
+*.mp3
+*.mp4
+*.m4a
+
+# Logs
+logs/*.log
+*.log
+
+# Databases
+*.db
+*.sqlite3
+
+# IDEs and OS files
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db

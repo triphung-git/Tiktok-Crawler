@@ -1,0 +1,92 @@
+# ==============================================================================
+# TIKTOK DATA PIPELINE CONFIGURATION
+# ==============================================================================
+
+pipeline:
+  name: "TikTok Data Pipeline for ASR"
+  version: "1.0.0"
+  batch_pattern: "WEEK\\d+_\\d{4}"
+
+paths:
+  root_dir: "."
+  raw_data_dir: "data/raw/tiktok"
+  processed_metadata_dir: "data/processed/metadata"
+  processed_audio_dir: "data/processed/audio"
+  output_json_dir: "data/output/json"
+  output_csv_dir: "data/output/csv"
+  logs_dir: "logs"
+  models_dir: "models"
+  global_index_path: "data/processed/metadata/processed_index.json"
+  fallback_index_path: "processed_index.json"
+  ffmpeg_path: "ffmpeg.exe"
+  ffprobe_path: "ffprobe.exe"
+
+crawler:
+  bot_name: "tiktok_crawler"
+  concurrent_requests: 4
+  download_delay: 2.0
+  randomize_download_delay: true
+  autothrottle_enabled: true
+  autothrottle_start_delay: 2.0
+  autothrottle_max_delay: 15.0
+  retry_times: 3
+  robotstxt_obey: false
+  max_scrolls: 5
+  browser:
+    browser_type: "chromium"
+    headless: true
+    timeout_ms: 30000
+    viewport:
+      width: 1280
+      height: 800
+    locale: "en-US"
+    user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    args:
+      - "--disable-blink-features=AutomationControlled"
+      - "--no-sandbox"
+      - "--disable-dev-shm-usage"
+
+processing:
+  supported_platforms:
+    tiktok:
+      - "tiktok.com"
+    youtube:
+      - "youtube.com"
+      - "youtu.be"
+    facebook:
+      - "facebook.com"
+      - "fb.watch"
+  min_duration_seconds: 2.0
+  max_duration_seconds: 600.0
+
+media:
+  download:
+    attempts: 3
+    socket_timeout: 60
+    cookies_from_browser: null
+    cookiefile: null
+    proxy: null
+  audio:
+    sample_rate: 16000
+    channels: 1
+    codec: "pcm_s16le"
+    format: "WAV"
+    loudnorm: "loudnorm=I=-16:TP=-1.0:LRA=11"
+    max_workers: 4
+  models:
+    uvr_model_path: "models/UVR-MDX-NET-Voc_FT.onnx"
+    dpdfnet_model_path: "models/dpdfnet8.onnx"
+    vad_model_path: "models/silero_vad.onnx"
+    uvr_num_threads: 4
+    dpdfnet_num_threads: 2
+    sherpa_provider: "cpu"
+  vad:
+    threshold: 0.45
+    min_silence_duration: 0.4
+    min_speech_duration: 0.5
+    max_speech_duration: 15.0
+    min_segment_duration: 2.0
+
+storage:
+  database_path: "data/pipeline.db"
+  atomic_write_suffix: ".part"

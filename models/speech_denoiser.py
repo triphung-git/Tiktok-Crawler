@@ -1,4 +1,5 @@
 import argparse
+import os
 import threading
 from pathlib import Path
 import numpy as np
@@ -29,19 +30,26 @@ def create_denoiser(model_path: str | Path = MODEL_PATH) -> sherpa_onnx.OfflineS
     if not model_path.is_file():
         raise FileNotFoundError(f"Không tìm thấy DPDFNet model: {model_path}")
 
+    # Tối ưu hóa số luồng CPU: DPDFNet hoạt động tốt ở 2-4 threads
+    num_threads = max(1, int(os.getenv("DPDFNET_NUM_THREADS", min(4, max(1, (os.cpu_count() or 1) // 2)))))
+    provider = os.getenv("SHERPA_ONNX_PROVIDER", "cpu").lower()
+
     config = sherpa_onnx.OfflineSpeechDenoiserConfig(
         model=sherpa_onnx.OfflineSpeechDenoiserModelConfig(
             dpdfnet=sherpa_onnx.OfflineSpeechDenoiserDpdfNetModelConfig(
                 model=str(model_path),
                 attenuation_limit_db=12.0,
             ),
-            num_threads=1,
+            num_threads=num_threads,
             debug=False,
-            provider="cpu",
+            provider=provider,
         )
     )
     if not config.validate():
-        raise ValueError(f"Cấu hình DPDFNet không hợp lệ: {config}")
+        if provider != "cpu":
+            config.model.provider = "cpu"
+        if not config.validate():
+            raise ValueError(f"Cấu hình DPDFNet không hợp lệ: {config}")
     return sherpa_onnx.OfflineSpeechDenoiser(config)
 
 
@@ -56,6 +64,8 @@ def get_denoiser() -> sherpa_onnx.OfflineSpeechDenoiser:
 def enhance_audio(input_path: str | Path, output_path: str | Path) -> None:
     samples, sample_rate = load_audio(input_path)
     denoised = get_denoiser().run(samples, sample_rate)
+    del samples
+
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     sf.write(
@@ -65,6 +75,7 @@ def enhance_audio(input_path: str | Path, output_path: str | Path) -> None:
         format="WAV",
         subtype="PCM_16",
     )
+    del denoised
 
 
 def main() -> None:

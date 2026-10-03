@@ -1,5 +1,21 @@
-numpy
-soundfile
-sherpa-onnx
-yt-dlp
-curl-cffi
+# Core Audio & AI Model Inference
+numpy>=1.24.0
+soundfile>=0.12.0
+scipy>=1.10.0
+sherpa-onnx>=1.10.0
+
+# Media Download
+yt-dlp>=2024.04.0
+curl-cffi>=0.6.0
+
+# TikTok Crawler (Scrapy + Playwright)
+scrapy>=2.11.0
+scrapy-playwright>=0.0.34
+playwright>=1.43.0
+
+# Configuration & Utilities
+PyYAML>=6.0
+python-dotenv>=1.0.0
+
+# Testing
+pytest>=8.0.0

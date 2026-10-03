@@ -1,0 +1,62 @@
+# ==============================================================================
+# TIKTOK TARGET TAGS & USERNAMES CONFIGURATION
+# ==============================================================================
+
+categories:
+  news:
+    description: "Tin tức thời sự, phóng sự, truyền hình chính luận"
+    tags:
+      - "tintuc"
+      - "thoisu"
+      - "vtv24"
+      - "tintuc24h"
+      - "baomoi"
+      - "phapluat"
+    users:
+      - "vtv24news"
+      - "vtvcab.tintuc"
+      - "plo.vn"
+      - "kenh14official"
+
+  entertainment:
+    description: "Giải trí, hài kịch, phim ngắn, đời sống"
+    tags:
+      - "giaitri"
+      - "haihuoc"
+      - "phimngan"
+      - "reviewphim"
+      - "chuyenla"
+    users:
+      - "yeuphimvietnam"
+      - "schannelvn"
+
+  education_science:
+    description: "Khoa học, giáo dục, kiến thức thường thức, công nghệ"
+    tags:
+      - "kienthucthuvi"
+      - "khoahoc"
+      - "congnghe"
+      - "tienganh"
+      - "hocmoingay"
+    users:
+      - "kienthucthuvi"
+      - "vuitapcode"
+
+  podcast_interview:
+    description: "Talkshow, phỏng vấn, podcast tiếng Việt dài tự nhiên"
+    tags:
+      - "podcast"
+      - "talkshow"
+      - "phongvan"
+      - "chuyentrom"
+      - "tamradio"
+    users:
+      - "vietcetera"
+      - "dustinvox"
+
+default_crawl:
+  tags:
+    - "tintuc"
+    - "giaitri"
+    - "podcast"
+  max_scrolls: 8
