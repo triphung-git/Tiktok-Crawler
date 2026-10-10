@@ -1,0 +1,174 @@
+{
+	"info": {
+		"_postman_id": "c1f7b889-4d32-4e9b-b531-fa90e1c28f3a",
+		"name": "TikTok Data Pipeline & Quality Engineering API Suite",
+		"description": "Comprehensive API & Contract Testing Collection for TikTok Data Pipeline, verifying Status Codes, Schema Contracts, and Latency SLA.",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "Health & Pipeline Status",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test(\"Status code is 200 OK\", function () {",
+							"    pm.response.to.have.status(200);",
+							"});",
+							"",
+							"pm.test(\"Response time SLA is within 400ms\", function () {",
+							"    pm.expect(pm.response.responseTime).to.be.below(400);",
+							"});",
+							"",
+							"pm.test(\"Service status is healthy\", function () {",
+							"    var jsonData = pm.response.json();",
+							"    pm.expect(jsonData.status).to.eql(\"healthy\");",
+							"    pm.expect(jsonData.pipeline_version).to.not.be.empty;",
+							"});"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{base_url}}/api/v1/health",
+					"host": ["{{base_url}}"],
+					"path": ["api", "v1", "health"]
+				}
+			},
+			"response": [
+				{
+					"name": "Default 200 OK Response",
+					"originalRequest": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/v1/health",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "health"]
+						}
+					},
+					"status": "OK",
+					"code": 200,
+					"_postman_previewlanguage": "json",
+					"header": [{"key": "Content-Type", "value": "application/json"}],
+					"body": "{\n  \"status\": \"healthy\",\n  \"pipeline_version\": \"1.2.0\",\n  \"active_workers\": 4,\n  \"database\": \"connected\"\n}"
+				}
+			]
+		},
+		{
+			"name": "Video Detail Contract Validation",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test(\"Status code is 200 OK\", function () {",
+							"    pm.response.to.have.status(200);",
+							"});",
+							"",
+							"pm.test(\"JSON Schema adheres to TikTok Video Specification\", function () {",
+							"    var schema = {",
+							"        \"type\": \"object\",",
+							"        \"required\": [\"item_id\", \"url\", \"platform\", \"duration\", \"author\"],",
+							"        \"properties\": {",
+							"            \"item_id\": { \"type\": \"string\" },",
+							"            \"url\": { \"type\": \"string\" },",
+							"            \"platform\": { \"type\": \"string\", \"enum\": [\"tiktok\"] },",
+							"            \"duration\": { \"type\": \"number\", \"minimum\": 1 },",
+							"            \"author\": { \"type\": \"string\" }",
+							"        }",
+							"    };",
+							"    var jsonData = pm.response.json();",
+							"    pm.expect(tv4.validate(jsonData, schema)).to.be.true;",
+							"});",
+							"",
+							"pm.test(\"Verify Media URL has valid format\", function () {",
+							"    var jsonData = pm.response.json();",
+							"    pm.expect(jsonData.url).to.match(/^https:\\/\\/(www\\.)?tiktok\\.com\\/@/);",
+							"});"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{base_url}}/api/v1/video/detail?id=7234567890123456789",
+					"host": ["{{base_url}}"],
+					"path": ["api", "v1", "video", "detail"],
+					"query": [{"key": "id", "value": "7234567890123456789"}]
+				}
+			},
+			"response": [
+				{
+					"name": "Valid Video Detail",
+					"status": "OK",
+					"code": 200,
+					"_postman_previewlanguage": "json",
+					"header": [{"key": "Content-Type", "value": "application/json"}],
+					"body": "{\n  \"item_id\": \"7234567890123456789\",\n  \"url\": \"https://www.tiktok.com/@vtv24news/video/7234567890123456789\",\n  \"platform\": \"tiktok\",\n  \"title\": \"Bản tin thời sự VTV24 hôm nay\",\n  \"duration\": 48.5,\n  \"author\": \"vtv24news\",\n  \"language_region\": \"northern\"\n}"
+				}
+			]
+		},
+		{
+			"name": "Simulate 429 Rate Limit (Negative Test)",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test(\"Status code is 429 Too Many Requests\", function () {",
+							"    pm.response.to.have.status(429);",
+							"});",
+							"",
+							"pm.test(\"Verify Retry-After header exists\", function () {",
+							"    pm.response.to.have.header(\"Retry-After\");",
+							"});",
+							"",
+							"pm.test(\"Error code specifies rate_limit\", function () {",
+							"    var jsonData = pm.response.json();",
+							"    pm.expect(jsonData.error).to.eql(\"rate_limited\");",
+							"});"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{base_url}}/api/v1/simulate/rate-limit",
+					"host": ["{{base_url}}"],
+					"path": ["api", "v1", "simulate", "rate-limit"]
+				}
+			},
+			"response": [
+				{
+					"name": "Simulated 429 Rate Limit",
+					"status": "Too Many Requests",
+					"code": 429,
+					"_postman_previewlanguage": "json",
+					"header": [
+						{"key": "Content-Type", "value": "application/json"},
+						{"key": "Retry-After", "value": "30"}
+					],
+					"body": "{\n  \"error\": \"rate_limited\",\n  \"message\": \"Too many requests to TikTok CDN. Retry after 30 seconds.\",\n  \"retry_after_seconds\": 30\n}"
+				}
+			]
+		}
+	],
+	"variable": [
+		{
+			"key": "base_url",
+			"value": "http://127.0.0.1:8000"
+		}
+	]
+}

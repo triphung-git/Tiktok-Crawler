@@ -1,18 +1,18 @@
 {
-  "updated_at": "2026-10-03T14:38:48.353953+00:00",
+  "updated_at": "2026-10-10T16:21:08.759489+00:00",
   "total_records": 2,
   "urls": {
     "https://tiktok.com/@u/video/1": {
       "task_id": "ID_0001",
       "item_id": "tt_1",
       "batch": "WEEK3_0309",
-      "recorded_at": "2026-10-03T14:38:48.353953+00:00"
+      "recorded_at": "2026-10-10T16:21:08.759489+00:00"
     },
     "https://tiktok.com/@u/video/2": {
       "task_id": "ID_0002",
       "item_id": "tt_2",
       "batch": "WEEK3_0309",
-      "recorded_at": "2026-10-03T14:38:48.353953+00:00"
+      "recorded_at": "2026-10-10T16:21:08.759489+00:00"
     }
   }
 }
